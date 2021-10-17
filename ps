@@ -1,0 +1,143 @@
+#%%%%%%%%%%%%%%% Name : Parth Shah                       %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%%%%% Program : API CDISC Library Portal      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%%%%% Date and Version : April 15,2021 /1.02  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+#Clean Up
+rm(list = ls())
+# This package is required for Accessing APIS (HTTP or HTTPS URLS from Web)
+library(httr)
+#This package exposes some additional functions to convert json/text to data frame
+library(rlist)
+#This package exposes some additional functions to convert json/text to data frame
+library(jsonlite)
+#This library is used to manipulate data
+library(tidyverse)
+library(stringr)
+
+#%%%%%%%%%%%%%%%%% 1.01 control terminologies packages %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+
+packages_resp <-  GET(url = "https://api.library.cdisc.org/api/mdr/ct/packages", add_headers("api-key" = "28b0e2189c664210870072543981265b"))            
+packages_resp
+
+## For better clarity put the conditions
+
+if (packages_resp$status_code != 200)
+  stop(paste0("====== CDISC API Status Seems Not Correct, your status code is : ",as.character(packages_resp$status_code)," =============="))
+
+print(packages_resp$status_code)
+
+## Check individual items in package 
+
+packages_resp_df <- as.data.frame(fromJSON(content(packages_resp,"text",encoding = "UTF-8"), flatten = TRUE))
+colnames(packages_resp_df)<-gsub("X_links.","",colnames(packages_resp_df))
+packages_resp_df <- packages_resp_df %>% select(packages.href,packages.title,packages.type)
+
+#%%%%%%%%%%%%%%%%% 1.02 Extract date part from HREF string %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+packages_resp_df <- packages_resp_df %>% dplyr::mutate(date.published = str_sub(packages.href, start= -10))
+
+#%%%%%%%%%%%%%%%%%  1.03 Convert Date String into Date object(Numeric) %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+packages_resp_df$date.published.char <- as.Date(packages_resp_df$date.published)
+
+#%%%%%%%%%%%%%%%%%  1.04 To determine group extract last 14 character out so date part will be removed %%%%%%%%%%%%%%%%%%%%%%%
+packages_resp_df <- packages_resp_df %>% dplyr::mutate(group = str_sub(packages.href, end= -14))
+
+#%%%%%%%%%%%%%%%%%  1.05  Make ord variable to give order based on latest date -- lastest date will be on top %%%%%%%%%%%%%%%%%%
+packages_resp_df <- packages_resp_df %>% group_by(group) %>% mutate(ord=order(desc(date.published)))
+
+#%%%%%%%%%%%%%%%%%  1.06 Sort dated (lastest - prior - 8 packages availabe all the time) %%%%%%%%%%%%%%%%%
+packages_resp_df  <- packages_resp_df %>% group_by(group) %>% arrange(group,ord) %>% filter(ord < 4)
+packages_resp_df$vers <- as.character(packages_resp_df$ord)
+packages_resp_df  <- packages_resp_df  %>% mutate(vers=recode(vers, "1"="Current Version", "2"="Prior Version","3"="Prior Version", "4"="Prior Version", "5"="Prior Version"))
+
+rm(list = c("packages_resp")) #%%%%%%% Clean up #%%%%%%
+
+mydfchar <- "sdtm"
+
+# Change name only to "mydf" not rest such as codelist_sdtm, sdtm, codelist_sdtm_unnested
+codelist_mydf <- data.frame() # creates an emmpty data frame                 
+tmp <- packages_resp_df [ which(packages_resp_df$group == paste0("/mdr/ct/packages/",mydfchar)), ]
+len <- length(tmp$group)  
+
+for (i in 1:len) {
+  data_frame <-GET(url = paste0("https://api.library.cdisc.org/api",tmp$packages.href[i]), add_headers("api-key" = "28b0e2189c664210870072543981265b"))            
+  data_frame_text <-content(data_frame,"text",encoding = "UTF-8")
+  data_frame_json <-fromJSON(data_frame_text, flatten = TRUE)
+  data_frame_df <-as.data.frame(data_frame_json)
+  codelist_mydf <- rbind(codelist_mydf , data_frame_df)
+  #rm(list= c("data_frame","data_frame_df", "data_frame_text","data_frame_json","i")) #%%%%%%%%%%%%%%%%% Cleanup #%%%%%%%%%%%%%%%%%
+}
+
+codelist_mydf <- as_tibble(codelist_mydf)
+#%%%%%%%%%%%%%%%%% Check Column names #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+colnames(codelist_mydf)
+
+#%%%%%%%%%%%%%%%%%%%%% Unnested mydf   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+codelist_mydf_unnested <- codelist_mydf %>% select(codelists.conceptId,codelists.name, codelists.terms, effectiveDate )
+codelist_mydf_unnested <- codelist_mydf_unnested %>% tidyr::unnest(cols = c(codelists.terms))
+codelist_mydf_unnested <- codelist_mydf_unnested %>% rename_all(paste0, ".c")
+codelist_mydf_unnested <- codelist_mydf_unnested %>% rename(codelists.conceptId = codelists.conceptId.c, effectiveDate=effectiveDate.c)
+
+codelist_mydf <- codelist_mydf %>% select(codelists.conceptId, codelists.definition, codelists.extensible,codelists.name, codelists.preferredTerm,
+                                          codelists.submissionValue, codelists.synonyms,description, effectiveDate, label,name,registrationStatus,      
+                                          source, version)
+
+mydfout <- inner_join(codelist_mydf, codelist_mydf_unnested, by = c("codelists.conceptId","effectiveDate"))
+
+
+
+
+
+
+
+
+# Hello my name is parth vijaykumar shah 
+
+
+
+
+#%%%%%%%%%%%%%%%%%  Purposefully break down each packages in to smaller section / create function based on the needs #%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%%%%%%%  This helps to find out error individual level                                                      #%%%%%%%%%%%%%%%%%
+
+#%%%%%%%%%%%%%%%%% 2.01 mydf CT Packages #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%    
+
+ct.funcs <- function(mydfchar) {
+  
+            # Change name only to "mydf" not rest such as codelist_sdtm, sdtm, codelist_sdtm_unnested
+            codelist_mydf <- data.frame() # creates an emmpty data frame                 
+            tmp <- packages_resp_df [ which(packages_resp_df$group == paste0("/mdr/ct/packages/",mydfchar)), ]
+            len <- length(tmp$group)  
+            
+            for (i in 1:len) {
+              data_frame <-GET(url = paste0("https://api.library.cdisc.org/api",tmp$packages.href[i]), add_headers("api-key" = "28b0e2189c664210870072543981265b"))            
+              data_frame_text <-content(data_frame,"text",encoding = "UTF-8")
+              data_frame_json <-fromJSON(data_frame_text, flatten = TRUE)
+              data_frame_df <-as.data.frame(data_frame_json)
+              codelist_mydf <- rbind(codelist_mydf , data_frame_df)
+              rm(list= c("data_frame","data_frame_df", "data_frame_text","data_frame_json","i")) #%%%%%%%%%%%%%%%%% Cleanup #%%%%%%%%%%%%%%%%%
+                  }
+            
+             codelist_mydf <- as_tibble(codelist_mydf)
+             #%%%%%%%%%%%%%%%%% Check Column names #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+             
+             colnames(codelist_mydf)
+             
+             #%%%%%%%%%%%%%%%%%%%%% Unnested mydf   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+             
+             codelist_mydf_unnested <- codelist_mydf %>% select(codelists.conceptId,codelists.name, codelists.terms, effectiveDate )
+             codelist_mydf_unnested <- codelist_mydf_unnested %>% tidyr::unnest(cols = c(codelists.terms))
+             codelist_mydf_unnested <- codelist_mydf_unnested %>% rename_all(paste0, ".c")
+             codelist_mydf_unnested <- codelist_mydf_unnested %>% rename(codelists.conceptId = codelists.conceptId.c, effectiveDate=effectiveDate.c)
+             
+             codelist_mydf <- codelist_mydf %>% select(codelists.conceptId, codelists.definition, codelists.extensible,codelists.name, codelists.preferredTerm,
+                                                       codelists.submissionValue, codelists.synonyms,description, effectiveDate, label,name,registrationStatus,      
+                                                       source, version)
+             
+             mydfout <- inner_join(codelist_mydf, codelist_mydf_unnested, by = c("codelists.conceptId","effectiveDate"))
+
+    }      
+
+sdtm <- ct.funcs(mydfchar="sdtm")
+adam <- ct.funcs(mydfchar="adam")
+
